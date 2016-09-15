@@ -1615,13 +1615,17 @@ LeafNode<T,Log2Dim>::readBuffers(std::istream& is, const CoordBBox& clipBBox, bo
     // Read in the value mask.
     mValueMask.load(is);
 
-    int8_t numBuffers = 1;
     if (io::getFormatVersion(is) < OPENVDB_FILE_VERSION_NODE_MASK_COMPRESSION) {
         // Read in the origin.
         is.read(reinterpret_cast<char*>(&mOrigin), sizeof(Coord::ValueType) * 3);
+    }
 
+    const bool multipleLeafBuffers = io::getDataCompression(is) & io::MULTIPLE_LEAF_BUFFERS;
+
+    int16_t numBuffers = 1;
+    if (multipleLeafBuffers) {
         // Read in the number of buffers, which should now always be one.
-        is.read(reinterpret_cast<char*>(&numBuffers), sizeof(int8_t));
+        is.read(reinterpret_cast<char*>(&numBuffers), sizeof(int16_t));
     }
 
     CoordBBox nodeBBox = this->getNodeBoundingBox();
@@ -1684,7 +1688,7 @@ LeafNode<T,Log2Dim>::readBuffers(std::istream& is, const CoordBBox& clipBBox, bo
 #endif
     }
 
-    if (numBuffers > 1) {
+    if (multipleLeafBuffers && numBuffers > 1) {
         // Read in and discard auxiliary buffers that were created with earlier
         // versions of the library.  (Auxiliary buffers are not mask compressed.)
         const bool zipped = io::getDataCompression(is) & io::COMPRESS_ZIP;
