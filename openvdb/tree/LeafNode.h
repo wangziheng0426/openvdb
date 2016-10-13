@@ -56,41 +56,6 @@ namespace tree {
 template<Index, typename> struct SameLeafConfig; // forward declaration
 
 
-/// @brief Templated block class to hold specific data types and a fixed
-/// number of values determined by Log2Dim. The actual coordinate
-/// dimension of the block is 2^Log2Dim, i.e. Log2Dim=3 corresponds to
-/// a LeafNode that spans a 8^3 block.
-template<typename T, Index Log2Dim>
-class LeafNode
-{
-public:
-    using BuildType = T;
-    using ValueType = T;
-    using LeafNodeType = LeafNode<ValueType, Log2Dim>;
-    using NodeMaskType = util::NodeMask<Log2Dim>;
-    using Ptr = SharedPtr<LeafNode>;
-
-    static const Index
-        LOG2DIM     = Log2Dim,      // needed by parent nodes
-        TOTAL       = Log2Dim,      // needed by parent nodes
-        DIM         = 1 << TOTAL,   // dimension along one coordinate direction
-        NUM_VALUES  = 1 << 3 * Log2Dim,
-        NUM_VOXELS  = NUM_VALUES,   // total number of voxels represented by this node
-        SIZE        = NUM_VALUES,
-        LEVEL       = 0;            // level 0 = leaf
-
-    /// @brief ValueConverter<T>::Type is the type of a LeafNode having the same
-    /// dimensions as this node but a different value type, T.
-    template<typename OtherValueType>
-    struct ValueConverter { using Type = LeafNode<OtherValueType, Log2Dim>; };
-
-    /// @brief SameConfiguration<OtherNodeType>::value is @c true if and only if
-    /// OtherNodeType is the type of a LeafNode with the same dimensions as this node.
-    template<typename OtherNodeType>
-    struct SameConfiguration {
-        static const bool value = SameLeafConfig<LOG2DIM, OtherNodeType>::value;
-    };
-
 #ifndef OPENVDB_2_ABI_COMPATIBLE
     struct FileInfo
     {
@@ -104,9 +69,22 @@ public:
 
     /// @brief Array of fixed size @f$2^{3 \times {\rm Log2Dim}}@f$ that stores
     /// the voxel values of a LeafNode
+    template <typename T, Index Log2Dim>
     class Buffer
     {
     public:
+        using ValueType = T;
+        using NodeMaskType = util::NodeMask<Log2Dim>;
+
+        static const Index
+            LOG2DIM     = Log2Dim,      // needed by parent nodes
+            TOTAL       = Log2Dim,      // needed by parent nodes
+            DIM         = 1 << TOTAL,   // dimension along one coordinate direction
+            NUM_VALUES  = 1 << 3 * Log2Dim,
+            NUM_VOXELS  = NUM_VALUES,   // total number of voxels represented by this node
+            SIZE        = NUM_VALUES,
+            LEVEL       = 0;            // level 0 = leaf
+
 #ifdef OPENVDB_2_ABI_COMPATIBLE
         /// Default constructor
         Buffer(): mData(new ValueType[SIZE]) {}
@@ -292,7 +270,7 @@ public:
             return mData;
         }
 
-    private:
+    // private:
         /// If this buffer is empty, return zero, otherwise return the value at index @ i.
         const ValueType& at(Index i) const
         {
@@ -349,7 +327,7 @@ public:
 
         friend class ::TestLeaf;
         // Allow the parent LeafNode to access this buffer's data pointer.
-        friend class LeafNode;
+        // friend class LeafNode;
 
 #ifdef OPENVDB_2_ABI_COMPATIBLE
         ValueType* mData;
@@ -365,6 +343,42 @@ public:
         static const ValueType sZero;
 #endif
     }; // class Buffer
+
+
+/// @brief Templated block class to hold specific data types and a fixed
+/// number of values determined by Log2Dim. The actual coordinate
+/// dimension of the block is 2^Log2Dim, i.e. Log2Dim=3 corresponds to
+/// a LeafNode that spans a 8^3 block.
+template<typename T, Index Log2Dim>
+class LeafNode
+{
+public:
+    using BuildType = T;
+    using ValueType = T;
+    using LeafNodeType = LeafNode<ValueType, Log2Dim>;
+    using NodeMaskType = util::NodeMask<Log2Dim>;
+    using Ptr = SharedPtr<LeafNode>;
+
+    static const Index
+        LOG2DIM     = Log2Dim,      // needed by parent nodes
+        TOTAL       = Log2Dim,      // needed by parent nodes
+        DIM         = 1 << TOTAL,   // dimension along one coordinate direction
+        NUM_VALUES  = 1 << 3 * Log2Dim,
+        NUM_VOXELS  = NUM_VALUES,   // total number of voxels represented by this node
+        SIZE        = NUM_VALUES,
+        LEVEL       = 0;            // level 0 = leaf
+
+    /// @brief ValueConverter<T>::Type is the type of a LeafNode having the same
+    /// dimensions as this node but a different value type, T.
+    template<typename OtherValueType>
+    struct ValueConverter { using Type = LeafNode<OtherValueType, Log2Dim>; };
+
+    /// @brief SameConfiguration<OtherNodeType>::value is @c true if and only if
+    /// OtherNodeType is the type of a LeafNode with the same dimensions as this node.
+    template<typename OtherNodeType>
+    struct SameConfiguration {
+        static const bool value = SameLeafConfig<LOG2DIM, OtherNodeType>::value;
+    };
 
 
     /// Default constructor
@@ -638,9 +652,9 @@ public:
     //
     /// @brief Exchange this node's data buffer with the given data buffer
     /// without changing the active states of the values.
-    void swap(Buffer& other) { mBuffer.swap(other); }
-    const Buffer& buffer() const { return mBuffer; }
-    Buffer& buffer() { return mBuffer; }
+    void swap(Buffer<ValueType, Log2Dim>& other) { mBuffer.swap(other); }
+    const Buffer<ValueType, Log2Dim>& buffer() const { return mBuffer; }
+    Buffer<ValueType, Log2Dim>& buffer() { return mBuffer; }
 
     //
     // I/O methods
@@ -1134,7 +1148,7 @@ protected:
 
 private:
     /// Buffer containing the actual data values
-    Buffer mBuffer;
+    Buffer<ValueType, Log2Dim> mBuffer;
     /// Bitmask that determines which voxels are active
     NodeMaskType mValueMask;
     /// Global grid index coordinates (x,y,z) of the local origin of this node
@@ -1144,7 +1158,7 @@ private:
 
 #ifndef OPENVDB_2_ABI_COMPATIBLE
 template<typename T, Index Log2Dim>
-const T LeafNode<T, Log2Dim>::Buffer::sZero = zeroVal<T>();
+const T Buffer<T, Log2Dim>::sZero = zeroVal<T>();
 #endif
 
 
@@ -1436,7 +1450,7 @@ LeafNode<T, Log2Dim>::fill(const CoordBBox& bbox, const ValueType& value, bool a
             const Index offsetXY = offsetX + ((y & (DIM-1u)) << Log2Dim);
             for (Int32 z = bbox.min().z(); z <= bbox.max().z(); ++z) {
                 const Index offset = offsetXY + (z & (DIM-1u));
-                mBuffer[offset] = value;
+                mBuffer.data()[offset] = value;
                 mValueMask.set(offset, active);
             }
         }
@@ -1553,7 +1567,7 @@ LeafNode<T, Log2Dim>::writeTopology(std::ostream& os, bool /*toHalf*/) const
 #ifndef OPENVDB_2_ABI_COMPATIBLE
 template<typename T, Index Log2Dim>
 inline void
-LeafNode<T, Log2Dim>::Buffer::doLoad() const
+Buffer<T, Log2Dim>::doLoad() const
 {
     if (!this->isOutOfCore()) return;
 
@@ -1625,8 +1639,8 @@ LeafNode<T,Log2Dim>::readBuffers(std::istream& is, const CoordBBox& clipBBox, bo
     if (!clipBBox.hasOverlap(nodeBBox)) {
         // This node lies completely outside the clipping region.
         // Read and discard its voxel values.
-        Buffer temp;
-        io::readCompressedValues(is, temp.mData, SIZE, mValueMask, fromHalf);
+        Buffer<T, Log2Dim> temp;
+        io::readCompressedValues(is, temp.data(), SIZE, mValueMask, fromHalf);
         mValueMask.setOff();
         mBuffer.setOutOfCore(false);
     } else {
@@ -1650,12 +1664,12 @@ LeafNode<T,Log2Dim>::readBuffers(std::istream& is, const CoordBBox& clipBBox, bo
             mBuffer.mFileInfo->meta = io::getStreamMetadataPtr(is);
 
             // Read and discard voxel values.
-            Buffer temp;
-            io::readCompressedValues(is, temp.mData, SIZE, mValueMask, fromHalf);
+            Buffer<T, Log2Dim> temp;
+            io::readCompressedValues(is, temp.data(), SIZE, mValueMask, fromHalf);
         } else {
 #endif
             mBuffer.allocate();
-            io::readCompressedValues(is, mBuffer.mData, SIZE, mValueMask, fromHalf);
+            io::readCompressedValues(is, mBuffer.data(), SIZE, mValueMask, fromHalf);
             mBuffer.setOutOfCore(false);
 
             // Get this tree's background value.
@@ -1673,7 +1687,7 @@ LeafNode<T,Log2Dim>::readBuffers(std::istream& is, const CoordBBox& clipBBox, bo
         // Read in and discard auxiliary buffers that were created with earlier
         // versions of the library.  (Auxiliary buffers are not mask compressed.)
         const bool zipped = io::getDataCompression(is) & io::COMPRESS_ZIP;
-        Buffer temp;
+        Buffer<T, Log2Dim> temp;
         for (int i = 1; i < numBuffers; ++i) {
             if (fromHalf) {
                 io::HalfReader<io::RealToHalf<T>::isReal, T>::read(is, temp.mData, SIZE, zipped);
@@ -1694,7 +1708,7 @@ LeafNode<T, Log2Dim>::writeBuffers(std::ostream& os, bool toHalf) const
 
     mBuffer.loadValues();
 
-    io::writeCompressedValues(os, mBuffer.mData, SIZE,
+    io::writeCompressedValues(os, mBuffer.data(), SIZE,
         mValueMask, /*childMask=*/NodeMaskType(), toHalf);
 }
 

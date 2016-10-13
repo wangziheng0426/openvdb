@@ -66,7 +66,7 @@ public:
 CPPUNIT_TEST_SUITE_REGISTRATION(TestLeaf);
 
 typedef openvdb::tree::LeafNode<int, 3> LeafType;
-typedef LeafType::Buffer                BufferType;
+typedef openvdb::tree::Buffer<int, 3>   BufferType;
 using openvdb::Index;
 
 void
