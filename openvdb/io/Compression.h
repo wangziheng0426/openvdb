@@ -428,7 +428,7 @@ readCompressedValues(std::istream& is, ValueT* destBuf, Index destCount,
 /// @param toHalf     if true, convert floating-point values to 16-bit half floats
 template<typename ValueT, typename MaskT>
 inline void
-writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
+writeCompressedValues(std::ostream& os, const ValueT* srcBuf, Index srcCount,
     const MaskT& valueMask, const MaskT& childMask, bool toHalf)
 {
     struct Local {
@@ -443,7 +443,8 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
     const bool maskCompress = compress & COMPRESS_ACTIVE_MASK;
 
     Index tempCount = srcCount;
-    ValueT* tempBuf = srcBuf;
+    const ValueT* tempBuf = srcBuf;
+    ValueT* newTempBuf = nullptr;
     boost::scoped_array<ValueT> scopedTempBuf;
 
     int8_t metadata = NO_MASK_AND_ALL_VALS;
@@ -552,8 +553,8 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
                 os.write(reinterpret_cast<const char*>(&truncatedVal), sizeof(ValueT));
                 if (metadata == MASK_AND_TWO_INACTIVE_VALS) {
                     // Write the second of two distinct inactive values.
-                    truncatedVal = truncateRealToHalf(inactiveVal[1]);
-                    os.write(reinterpret_cast<const char*>(&truncatedVal), sizeof(ValueT));
+                    ValueT truncatedVal2 = truncateRealToHalf(inactiveVal[1]);
+                    os.write(reinterpret_cast<const char*>(&truncatedVal2), sizeof(ValueT));
                 }
             }
         }
@@ -566,7 +567,7 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
         } else {
             // Create a new array to hold just the active values.
             scopedTempBuf.reset(new ValueT[srcCount]);
-            tempBuf = scopedTempBuf.get();
+            ValueT* newTempBuf = scopedTempBuf.get();
 
             if (metadata == NO_MASK_OR_INACTIVE_VALS ||
                 metadata == NO_MASK_AND_MINUS_BG ||
@@ -575,7 +576,7 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
                 // Copy active values to the contiguous array.
                 tempCount = 0;
                 for (typename MaskT::OnIterator it = valueMask.beginOn(); it; ++it, ++tempCount) {
-                    tempBuf[tempCount] = srcBuf[it.pos()];
+                    newTempBuf[tempCount] = srcBuf[it.pos()];
                 }
             } else {
                 // Copy active values to a new, contiguous array and populate a bitmask
@@ -584,7 +585,7 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
                 tempCount = 0;
                 for (Index srcIdx = 0; srcIdx < srcCount; ++srcIdx) {
                     if (valueMask.isOn(srcIdx)) { // active value
-                        tempBuf[tempCount] = srcBuf[srcIdx];
+                        newTempBuf[tempCount] = srcBuf[srcIdx];
                         ++tempCount;
                     } else { // inactive value
                         if (Local::eq(srcBuf[srcIdx], inactiveVal[1])) {
@@ -602,9 +603,9 @@ writeCompressedValues(std::ostream& os, ValueT* srcBuf, Index srcCount,
 
     // Write out the buffer.
     if (toHalf) {
-        HalfWriter<RealToHalf<ValueT>::isReal, ValueT>::write(os, tempBuf, tempCount, compress);
+        HalfWriter<RealToHalf<ValueT>::isReal, ValueT>::write(os, newTempBuf ? newTempBuf : tempBuf, tempCount, compress);
     } else {
-        writeData(os, tempBuf, tempCount, compress);
+        writeData(os, newTempBuf ? newTempBuf : tempBuf, tempCount, compress);
     }
 }
 
