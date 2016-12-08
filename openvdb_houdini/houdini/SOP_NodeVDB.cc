@@ -224,11 +224,13 @@ SOP_NodeVDB::matchGroup(GU_Detail& aGdp, const std::string& pattern)
 
 
 void
+#if (UT_VERSION_INT >= 0x10000000) // 16.0.0 or later
+SOP_NodeVDB::fillInfoTreeNodeSpecific(UT_InfoTree& tree, const OP_NodeInfoTreeParms &parms)
+{
+    SOP_Node::fillInfoTreeNodeSpecific(tree, parms);
+#else
 SOP_NodeVDB::fillInfoTreeNodeSpecific(UT_InfoTree& tree, fpreal time)
 {
-#if (UT_VERSION_INT >= 0x10000000) // 16.0.0 or later
-    SOP_Node::fillInfoTreeNodeSpecific(tree, OP_NodeInfoTreeParms(time));
-#else
     SOP_Node::fillInfoTreeNodeSpecific(tree, time);
 #endif
 

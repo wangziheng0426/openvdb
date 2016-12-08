@@ -87,11 +87,16 @@ public:
     SOP_NodeVDB(OP_Network*, const char*, OP_Operator*);
     virtual ~SOP_NodeVDB() {}
 
-    virtual void fillInfoTreeNodeSpecific(UT_InfoTree&, fpreal time);
-    virtual void getNodeSpecificInfoText(OP_Context&, OP_NodeInfoParms&);
+#if (UT_VERSION_INT >= 0x10000000) // 16.0.0 or later
+    virtual void fillInfoTreeNodeSpecific(UT_InfoTree&,
+                                          const OP_NodeInfoTreeParms &parms) override;
+#else
+    virtual void fillInfoTreeNodeSpecific(UT_InfoTree&, fpreal time) override;
+#endif
+    virtual void getNodeSpecificInfoText(OP_Context&, OP_NodeInfoParms&) override;
 
 protected:
-    virtual OP_ERROR cookMyGuide1(OP_Context&);
+    virtual OP_ERROR cookMyGuide1(OP_Context&) override;
     //virtual OP_ERROR cookMyGuide2(OP_Context&);
 
     /// @brief Retrieve a group from a geometry detail by parsing a pattern
