@@ -110,6 +110,10 @@ newSopOperator(OP_OperatorTable* table)
         .setRange(PRM_RANGE_UI, -10, PRM_RANGE_UI, 10)
         .setDefault(PRMzeroDefaults));
 
+    parms.add(hutil::ParmFactory(PRM_TOGGLE, "clipToFrustum", "Clip To Frustum")
+        .setDefault(PRMoneDefaults)
+        .setHelpText("Clip the occlusion mask to the frustum during generation."));
+
     hvdb::OpenVDBOpFactory("OpenVDB Occlusion Mask",
         SOP_OpenVDB_Occlusion_Mask::factory, parms, *table)
         .addInput("VDBs");
@@ -255,11 +259,12 @@ struct BoolSampler
 
 struct ConstructShadow
 {
-    ConstructShadow(const openvdb::math::Transform& frustum, int erode, int zoffset)
+    ConstructShadow(const openvdb::math::Transform& frustum, int erode, int zoffset, bool clipToFrustum)
         : mGrid(openvdb::BoolGrid::create(false))
         , mFrustum(frustum)
         , mErode(erode)
         , mZOffset(zoffset)
+        , mClipToFrustum(clipToFrustum)
     {
     }
 
@@ -270,6 +275,9 @@ struct ConstructShadow
         typedef typename GridType::TreeType TreeType;
 
         const TreeType& tree = grid.tree();
+
+        const openvdb::math::NonlinearFrustumMap& map =
+            *mFrustum.map<openvdb::math::NonlinearFrustumMap>();
 
         // Resample active tree topology into camera frustum space.
 
@@ -298,14 +306,21 @@ struct ConstructShadow
                 }
             }
 
-
-            if (grid.transform().voxelSize()[0] < mFrustum.voxelSize()[0]) {
-                openvdb::tools::resampleToMatch<openvdb::tools::PointSampler>(
-                    topologyMask, frustumMask);
-            } else {
-                openvdb::tools::resampleToMatch<BoolSampler>(topologyMask, frustumMask);
+            openvdb::CoordBBox region;
+            if (mClipToFrustum) {
+                const openvdb::BBoxd bbox = map.getBBox();
+                region = openvdb::CoordBBox(openvdb::Coord::floor(bbox.min()), openvdb::Coord::ceil(bbox.max()));
             }
 
+            openvdb::util::NullInterrupter interrupter;
+
+            if (grid.transform().voxelSize()[0] < mFrustum.voxelSize()[0]) {
+                openvdb::tools::doResampleToMatch<openvdb::tools::PointSampler>(
+                    topologyMask, frustumMask, region, interrupter);
+            } else {
+                openvdb::tools::doResampleToMatch<BoolSampler>(
+                    topologyMask, frustumMask, region, interrupter);
+            }
         }
 
 
@@ -315,8 +330,6 @@ struct ConstructShadow
         mGrid->setTransform(mFrustum.copy());
         openvdb::BoolTree& shadowTree = mGrid->tree();
 
-        const openvdb::math::NonlinearFrustumMap& map =
-            *mFrustum.map<openvdb::math::NonlinearFrustumMap>();
         int zCoord = int(std::floor(map.getBBox().max()[2]));
 
         // Voxel shadows
@@ -348,6 +361,7 @@ private:
     openvdb::BoolGrid::Ptr mGrid;
     const openvdb::math::Transform mFrustum;
     const int mErode, mZOffset;
+    const bool mClipToFrustum;
 };
 
 
@@ -406,8 +420,7 @@ SOP_OpenVDB_Occlusion_Mask::cookMySop(OP_Context& context)
 
 
         ConstructShadow shadowOp(*mFrustum,
-            evalInt("erode", 0, time), evalInt("zoffset", 0, time));
-
+            evalInt("erode", 0, time), evalInt("zoffset", 0, time), bool(evalInt("clipToFrustum", 0, time)));
 
         // Get the group of grids to surface.
         UT_String groupStr;

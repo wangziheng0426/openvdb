@@ -218,21 +218,23 @@ LevelSetFracture<GridType, InterruptType>::fracture(GridPtrList& grids, const Gr
 
             cutterGrid.setTransform(xform);
 
+            CoordBBox clipRegion;
+
             // Since there is no scaling, use the generic resampler instead of
             // the more expensive level set rebuild tool.
             if (mInterrupter != NULL) {
 
                 if (hasInstanceRotations) {
-                    doResampleToMatch<BoxSampler>(cutterGrid, instCutterGrid, *mInterrupter);
+                    doResampleToMatch<BoxSampler>(cutterGrid, instCutterGrid, clipRegion, *mInterrupter);
                 } else {
-                    doResampleToMatch<PointSampler>(cutterGrid, instCutterGrid, *mInterrupter);
+                    doResampleToMatch<PointSampler>(cutterGrid, instCutterGrid, clipRegion, *mInterrupter);
                 }
             } else {
                 util::NullInterrupter interrupter;
                 if (hasInstanceRotations) {
-                    doResampleToMatch<BoxSampler>(cutterGrid, instCutterGrid, interrupter);
+                    doResampleToMatch<BoxSampler>(cutterGrid, instCutterGrid, clipRegion, interrupter);
                 } else {
-                    doResampleToMatch<PointSampler>(cutterGrid, instCutterGrid, interrupter);
+                    doResampleToMatch<PointSampler>(cutterGrid, instCutterGrid, clipRegion, interrupter);
                 }
             }
 

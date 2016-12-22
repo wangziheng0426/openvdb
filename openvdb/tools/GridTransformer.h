@@ -207,17 +207,18 @@ public:
 
     template<typename Sampler, typename GridT, typename Transformer>
     void transformGrid(const Transformer&,
-        const GridT& inGrid, GridT& outGrid) const;
+        const GridT& inGrid, GridT& outGrid, const CoordBBox& clipRegion = CoordBBox()) const;
 
 protected:
     template<typename Sampler, typename GridT, typename Transformer>
-    void applyTransform(const Transformer&, const GridT& inGrid, GridT& outGrid) const;
+    void applyTransform(const Transformer&, const GridT& inGrid, GridT& outGrid,
+        const CoordBBox& bbox = CoordBBox()) const;
 
     bool interrupt() const { return mInterrupt && mInterrupt(); }
 
 private:
     template<typename Sampler, typename InTreeT, typename OutTreeT, typename Transformer>
-    static void transformBBox(const Transformer&, const CoordBBox& inBBox,
+    static void transformBBox(const Transformer&, const CoordBBox& bbox, const CoordBBox& clipRegion,
         const InTreeT& inTree, OutTreeT& outTree, const InterruptFunc&,
         const Sampler& = Sampler());
 
@@ -268,7 +269,7 @@ public:
     const Mat4R& getTransform() const { return mTransform; }
 
     template<class Sampler, class GridT>
-    void transformGrid(const GridT& inGrid, GridT& outGrid) const;
+    void transformGrid(const GridT& inGrid, GridT& outGrid, const CoordBBox& clipRegion = openvdb::CoordBBox()) const;
 
 private:
     struct MatrixTransform;
@@ -442,7 +443,7 @@ private:
 /// @warning Do not use this function to scale or shear a level set grid.
 template<typename Sampler, typename Interrupter, typename GridType>
 inline void
-doResampleToMatch(const GridType& inGrid, GridType& outGrid, Interrupter& interrupter)
+doResampleToMatch(const GridType& inGrid, GridType& outGrid, const CoordBBox& clipRegion, Interrupter& interrupter)
 {
     ABTransform xform(inGrid.transform(), outGrid.transform());
 
@@ -461,14 +462,14 @@ doResampleToMatch(const GridType& inGrid, GridType& outGrid, Interrupter& interr
         transformer.setInterrupter(interrupter);
 
         // Transform the input grid and store the result in the output grid.
-        transformer.transformGrid<Sampler>(inGrid, outGrid);
+        transformer.transformGrid<Sampler>(inGrid, outGrid, clipRegion);
     } else {
         // If either the input or the output transform is non-affine,
         // use the slower GridResampler API.
         GridResampler resampler;
         resampler.setInterrupter(interrupter);
 
-        resampler.transformGrid<Sampler>(xform, inGrid, outGrid);
+        resampler.transformGrid<Sampler>(xform, inGrid, outGrid, clipRegion);
     }
 }
 
@@ -512,7 +513,8 @@ resampleToMatch(const GridType& inGrid, GridType& outGrid, Interrupter& interrup
     }
 
     // If the input grid is not a level set, use the generic resampler.
-    doResampleToMatch<Sampler>(inGrid, outGrid, interrupter);
+    CoordBBox clipRegion;
+    doResampleToMatch<Sampler>(inGrid, outGrid, clipRegion, interrupter);
 }
 
 
@@ -679,23 +681,23 @@ GridResampler::setInterrupter(InterrupterType& interrupter)
 template<typename Sampler, typename GridT, typename Transformer>
 void
 GridResampler::transformGrid(const Transformer& xform,
-    const GridT& inGrid, GridT& outGrid) const
+    const GridT& inGrid, GridT& outGrid, const CoordBBox& clipRegion) const
 {
     tools::changeBackground(outGrid.tree(), inGrid.background());
-    applyTransform<Sampler>(xform, inGrid, outGrid);
+    applyTransform<Sampler>(xform, inGrid, outGrid, clipRegion);
 }
 
 
 template<class Sampler, class GridT>
 void
-GridTransformer::transformGrid(const GridT& inGrid, GridT& outGrid) const
+GridTransformer::transformGrid(const GridT& inGrid, GridT& outGrid, const CoordBBox& clipRegion) const
 {
     tools::changeBackground(outGrid.tree(), inGrid.background());
 
     if (!Sampler::mipmap() || mMipLevels == Vec3i::zero()) {
         // Skip the mipmapping step.
         const MatrixTransform xform(mTransform);
-        applyTransform<Sampler>(xform, inGrid, outGrid);
+        applyTransform<Sampler>(xform, inGrid, outGrid, clipRegion);
 
     } else {
         bool firstPass = true;
@@ -707,7 +709,7 @@ GridTransformer::transformGrid(const GridT& inGrid, GridT& outGrid) const
             // Apply the pre-scale transform to the input grid
             // and store the result in a temporary grid.
             const MatrixTransform xform(mPreScaleTransform);
-            applyTransform<Sampler>(xform, inGrid, *tempGrid);
+            applyTransform<Sampler>(xform, inGrid, *tempGrid, clipRegion);
         }
 
         // While the scale factor along one or more axes is less than 1/2,
@@ -724,12 +726,12 @@ GridTransformer::transformGrid(const GridT& inGrid, GridT& outGrid) const
             if (firstPass) {
                 firstPass = false;
                 // Scale the input grid and store the result in a temporary grid.
-                applyTransform<Sampler>(xform, inGrid, *tempGrid);
+                applyTransform<Sampler>(xform, inGrid, *tempGrid, clipRegion);
             } else {
                 // Scale the temporary grid and store the result in a transient grid,
                 // then swap the two and discard the transient grid.
                 typename GridT::Ptr destGrid = GridT::create(background);
-                applyTransform<Sampler>(xform, *tempGrid, *destGrid);
+                applyTransform<Sampler>(xform, *tempGrid, *destGrid, clipRegion);
                 tempGrid.swap(destGrid);
             }
             // (3, 2, 1) -> (2, 1, 0) -> (1, 0, 0) -> (0, 0, 0), etc.
@@ -739,7 +741,7 @@ GridTransformer::transformGrid(const GridT& inGrid, GridT& outGrid) const
         // Apply the post-scale transform and store the result in the output grid.
         if (!mPostScaleTransform.eq(Mat4R::identity())) {
             const MatrixTransform xform(mPostScaleTransform);
-            applyTransform<Sampler>(xform, *tempGrid, outGrid);
+            applyTransform<Sampler>(xform, *tempGrid, outGrid, clipRegion);
         } else {
             outGrid.setTree(tempGrid->treePtr());
         }
@@ -761,13 +763,13 @@ public:
     using InTreeAccessor = typename tree::ValueAccessor<const TreeT>;
     using OutTreeAccessor = typename tree::ValueAccessor<TreeT>;
 
-    RangeProcessor(const Transformer& xform, const CoordBBox& b, const TreeT& inT, TreeT& outT):
-        mIsRoot(true), mXform(xform), mBBox(b),
+    RangeProcessor(const Transformer& xform, const CoordBBox& b, const CoordBBox& outB, const TreeT& inT, TreeT& outT):
+        mIsRoot(true), mXform(xform), mBBox(b), mClipBBox(outB),
         mInTree(inT), mOutTree(&outT), mInAcc(mInTree), mOutAcc(*mOutTree)
     {}
 
-    RangeProcessor(const Transformer& xform, const CoordBBox& b, const TreeT& inTree):
-        mIsRoot(false), mXform(xform), mBBox(b),
+    RangeProcessor(const Transformer& xform, const CoordBBox& b, const CoordBBox& clipB, const TreeT& inTree):
+        mIsRoot(false), mXform(xform), mBBox(b), mClipBBox(clipB),
         mInTree(inTree), mOutTree(new TreeT(inTree.background())),
         mInAcc(mInTree), mOutAcc(*mOutTree)
     {}
@@ -779,6 +781,7 @@ public:
         mIsRoot(false),
         mXform(other.mXform),
         mBBox(other.mBBox),
+        mClipBBox(other.mClipBBox),
         mInTree(other.mInTree),
         mOutTree(new TreeT(mInTree.background())),
         mInAcc(mInTree),
@@ -802,7 +805,7 @@ public:
                     Coord::minComponent(bbox.max(), mBBox.max()));
             }
             if (!bbox.empty()) {
-                transformBBox<Sampler>(mXform, bbox, mInAcc, mOutAcc, mInterrupt);
+                transformBBox<Sampler>(mXform, bbox, mClipBBox, mInAcc, mOutAcc, mInterrupt);
             }
         }
     }
@@ -833,7 +836,7 @@ public:
                 /// and fill it with the tile value.  Then transform the remaining voxels.
                 internal::TileSampler<Sampler, InTreeAccessor>
                     sampler(bbox, i.getValue(), i.isValueOn());
-                transformBBox(mXform, bbox, mInAcc, mOutAcc, mInterrupt, sampler);
+                transformBBox(mXform, bbox, mClipBBox, mInAcc, mOutAcc, mInterrupt, sampler);
             }
         }
     }
@@ -850,6 +853,7 @@ private:
     const bool mIsRoot; // true if mOutTree is the top-level tree
     Transformer mXform;
     CoordBBox mBBox;
+    CoordBBox mClipBBox;
     const TreeT& mInTree;
     TreeT* mOutTree;
     InTreeAccessor mInAcc;
@@ -864,7 +868,7 @@ private:
 template<class Sampler, class GridT, typename Transformer>
 void
 GridResampler::applyTransform(const Transformer& xform,
-    const GridT& inGrid, GridT& outGrid) const
+    const GridT& inGrid, GridT& outGrid, const CoordBBox& clipRegion) const
 {
     using TreeT = typename GridT::TreeType;
     const TreeT& inTree = inGrid.tree();
@@ -879,7 +883,7 @@ GridResampler::applyTransform(const Transformer& xform,
         // Note: Tiles in level sets can only be background tiles, and they
         // are handled more efficiently with a signed flood fill (see below).
 
-        RangeProc proc(xform, CoordBBox(), inTree, outTree);
+        RangeProc proc(xform, CoordBBox(), clipRegion, inTree, outTree);
         proc.setInterrupt(mInterrupt);
 
         typename RangeProc::TileIterT tileIter = inTree.cbeginValueAll();
@@ -902,7 +906,7 @@ GridResampler::applyTransform(const Transformer& xform,
 
     // Independently transform the leaf nodes of the input grid.
 
-    RangeProc proc(xform, clipBBox, inTree, outTree);
+    RangeProc proc(xform, clipBBox, clipRegion, inTree, outTree);
     proc.setInterrupt(mInterrupt);
 
     typename RangeProc::LeafRange leafRange(inTree.cbeginLeaf());
@@ -930,6 +934,7 @@ void
 GridResampler::transformBBox(
     const Transformer& xform,
     const CoordBBox& bbox,
+    const CoordBBox& clipRegion,
     const InTreeT& inTree,
     OutTreeT& outTree,
     const InterruptFunc& interrupt,
@@ -953,8 +958,16 @@ GridResampler::transformBBox(
         outRMax = math::maxComponent(outRMax, xform.transform(corner));
     }
     Vec3i
-        outMin = local_util::floorVec3(outRMin) - Sampler::radius(),
-        outMax = local_util::ceilVec3(outRMax) + Sampler::radius();
+        outMin = local_util::floorVec3(outRMin),
+        outMax = local_util::ceilVec3(outRMax);
+
+    if (!clipRegion.empty()) {
+        outMin = math::maxComponent(clipRegion.min().asVec3i(), outMin),
+        outMax = math::minComponent(clipRegion.max().asVec3i(), outMax);
+    }
+
+    outMin -= Sampler::radius();
+    outMax += Sampler::radius();
 
     if (!xform.isAffine()) {
         // If the transform is not affine, back-project each output voxel
