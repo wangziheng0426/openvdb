@@ -60,6 +60,7 @@
     #include <GU/GU_DetailHandle.h>
 #endif
 
+#include <GEO/GEO_Curve.h>
 #include <CH/CH_Manager.h>
 #include <GA/GA_Types.h> // for GA_ATTRIB_POINT
 #include <SYS/SYS_Types.h> // for int32, float32, etc
@@ -183,6 +184,19 @@ attributeTupleSize(const GA_Attribute* const attribute)
     }
 
     return int16_t(0);
+}
+
+template <typename ValueType, typename HoudiniOffsetAttribute>
+void
+convertSegmentsFromHoudini( PointDataTree& tree, const tools::PointIndexTree& indexTree, const openvdb::Name& name,
+                            const size_t count, HoudiniOffsetAttribute& houdiniOffsets)
+{
+    static_assert(!std::is_base_of<AttributeArray, ValueType>::value, "ValueType must not be derived from AttributeArray");
+    static_assert(!std::is_same<ValueType, openvdb::Name>::value, "ValueType must not be openvdb::Name/std::string");
+
+    appendAttribute<ValueType>(tree, name, zeroVal<ValueType>(), count);
+
+    populateAttribute<PointDataTree, tools::PointIndexTree, HoudiniOffsetAttribute>(tree, indexTree, name, houdiniOffsets, count);
 }
 
 template <typename ValueType, typename CodecType = NullCodec>
@@ -391,6 +405,8 @@ createPointDataGrid(const GU_Detail& ptGeo, const int compression,
                     const AttributeInfoMap& attributes, const openvdb::math::Transform& transform)
 {
     using HoudiniPositionAttribute = hvdb::HoudiniReadAttribute<openvdb::Vec3d>;
+    using HoudiniOffsetAttribute = hvdb::HoudiniOffsetAttribute<openvdb::Vec3f>;
+    using HoudiniOrderAttribute = hvdb::HoudiniReadAttribute<int>;
 
     // store point group information
 
@@ -403,6 +419,8 @@ createPointDataGrid(const GU_Detail& ptGeo, const int compression,
     hvdb::OffsetListPtr offsets;
     hvdb::OffsetPairListPtr offsetPairs;
 
+    std::vector<int> curveOrders;
+
     size_t vertexCount = 0;
 
     for (GA_Iterator primitiveIt(ptGeo.getPrimitiveRange()); !primitiveIt.atEnd(); ++primitiveIt) {
@@ -413,6 +431,9 @@ createPointDataGrid(const GU_Detail& ptGeo, const int compression,
         vertexCount = primitive->getVertexCount();
 
         if (vertexCount == 0)  continue;
+
+        const GEO_Curve* curvePrimitive(static_cast<const GEO_Curve*>(primitive));
+        curveOrders.push_back(curvePrimitive->getOrder());
 
         if (!offsets)   offsets.reset(new hvdb::OffsetList);
 
@@ -496,6 +517,23 @@ createPointDataGrid(const GU_Detail& ptGeo, const int compression,
         setGroup(tree, indexTree, inGroup, groupName);
 
         std::fill(inGroup.begin(), inGroup.end(), short(0));
+    }
+
+    // Add curve segments to PointDataGrid
+
+    if (offsetPairs) {
+
+        HoudiniOffsetAttribute segments(positionAttribute, offsetPairs, vertexCount-1, transform);
+
+        convertSegmentsFromHoudini<Vec3f, HoudiniOffsetAttribute>(tree, indexTree, "segments", vertexCount-1, segments);
+
+        MetaMap& metadata = makeDescriptorUnique(tree)->getMetadata();
+        metadata.insertMeta("nurbscurve", StringMetadata("segments"));
+
+        appendAttribute<int>(tree, "order", 0);
+
+        hvdb::ReadAttribute<int> orderAttribute(curveOrders, offsets);
+        populateAttribute<PointDataTree, tools::PointIndexTree, hvdb::ReadAttribute<int> >(tree, indexTree, "order", orderAttribute);
     }
 
     // Add other attributes to PointDataGrid

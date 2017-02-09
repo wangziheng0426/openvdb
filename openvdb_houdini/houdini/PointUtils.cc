@@ -37,6 +37,7 @@
 #include <openvdb/points/AttributeArrayString.h>
 #include <openvdb/points/PointCount.h>
 #include <openvdb/points/PointDataGrid.h>
+#include <GU/GU_PrimNURBCurve.h>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -76,7 +77,7 @@ openvdb_houdini::convertPointDataGridToHoudini(
     const openvdb::Index64 startOffset = detail.appendPointBlock(total);
 
     HoudiniWriteAttribute<openvdb::Vec3f> positionAttribute(*detail.getP());
-    convertPointDataGridPosition(positionAttribute, grid, pointOffsets, startOffset, includeGroups, excludeGroups, inCoreOnly);
+    convertPointDataGridPosition(positionAttribute, grid, pointOffsets, startOffset, includeGroups, excludeGroups, /*curves=*/true, inCoreOnly);
 
     // add other point attributes to the hdk detail
     const openvdb::points::AttributeSet::Descriptor::NameToPosMap& nameToPosMap = descriptor.map();
@@ -229,6 +230,13 @@ openvdb_houdini::convertPointDataGridToHoudini(
         convertPointDataGridGroup(group, tree, pointOffsets, startOffset, index,
             includeGroups, excludeGroups, inCoreOnly);
     }
+
+    GU_PrimNURBCurve* curve = GU_PrimNURBCurve::build(&detail, 4, /*order=*/4, /*closed=*/0, /*interpEnds=*/1, /*appendPoints=*/0);
+
+    curve->setVertexPoint(0, GA_Offset(0));
+    curve->setVertexPoint(1, GA_Offset(1));
+    curve->setVertexPoint(2, GA_Offset(2));
+    curve->setVertexPoint(3, GA_Offset(3));
 }
 
 

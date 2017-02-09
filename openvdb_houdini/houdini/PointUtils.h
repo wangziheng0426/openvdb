@@ -496,6 +496,85 @@ private:
 ////////////////////////////////////////
 
 
+/// @brief Writeable wrapper class around Houdini point attributes which hold
+/// a reference to the GA Attribute to write
+template <typename T>
+struct HoudiniWriteAttributeArray
+{
+    using ValueType = T;
+
+    struct Handle
+    {
+        explicit Handle(HoudiniWriteAttributeArray<T>& attribute)
+            : mHandle(&attribute.mAttribute) { }
+
+        void clear() {
+            mData.clear();
+        }
+
+        void push(const T value) {
+            mData.append(value);
+        }
+
+        void set(openvdb::Index offset) {
+            writeAttributeArrayValue(mHandle, GA_Offset(offset), mData);
+        }
+
+    private:
+        typename GAHandleTraits<T>::ARW mHandle;
+        UT_ValArray<T> mData;
+    }; // struct Handle
+
+    explicit HoudiniWriteAttributeArray(GA_Attribute& attribute)
+        : mAttribute(attribute) { }
+
+    void expand() {
+        mAttribute.hardenAllPages();
+    }
+
+    void compact() {
+        mAttribute.tryCompressAllPages();
+    }
+
+private:
+    GA_Attribute& mAttribute;
+}; // struct HoudiniWriteAttributeArray
+
+
+////////////////////////////////////////
+
+
+template <typename T>
+struct ReadAttribute
+{
+    typedef T value_type;
+    typedef T PosType;
+
+    explicit ReadAttribute(const std::vector<T>& values,
+        OffsetListPtr offsets = OffsetListPtr())
+        : mValues(values)
+        , mOffsets(offsets) { }
+
+    // Return the value of the nth point in the array (scalar type only)
+    void get(T& value, const size_t n, const openvdb::Index component = 0) const
+    {
+        value = mValues[n];
+    }
+
+    // Only provided to match the required interface for the PointPartitioner
+    void getPos(size_t n, T& xyz) const { return this->get(xyz, n); }
+
+    size_t size() const
+    {
+        return mOffsets ? mOffsets->size() : mValues.size();
+    }
+
+private:
+    const std::vector<T>&  mValues;
+    OffsetListPtr          mOffsets;
+}; // struct ReadAttribute
+
+
 /// @brief Readable wrapper class around Houdini point attributes which hold
 /// a reference to the GA Attribute to access and optionally a list of offsets
 template <typename T>
@@ -540,7 +619,49 @@ private:
     const ReadHandleType   mHandle;
     const GA_Attribute&    mAttribute;
     OffsetListPtr          mOffsets;
-}; // HoudiniReadAttribute
+}; // struct HoudiniReadAttribute
+
+
+////////////////////////////////////////
+
+
+template <typename T>
+struct HoudiniOffsetAttribute
+{
+    using value_type = T;
+    using PosType = T;
+    typedef typename GAHandleTraits<T>::RO ReadHandleType;
+
+    HoudiniOffsetAttribute(const GA_Attribute& attribute, OffsetPairListPtr offsetPairs, openvdb::Index stride,
+                           const openvdb::math::Transform& transform)
+        : mAttribute(attribute)
+        , mHandle(&attribute)
+        , mOffsetPairs(offsetPairs)
+        , mStride(stride)
+        , mTransform(transform) { }
+
+    template <typename ValueType>
+    void get(ValueType& value, size_t n, openvdb::Index offset = 0) const
+    {
+        const OffsetPair& pair = (*mOffsetPairs)[n * mStride + offset];
+
+        GA_Offset offset1(pair.first);
+        GA_Offset offset2(pair.second);
+
+        value = mTransform.worldToIndex(readAttributeValue<ReadHandleType, ValueType>(mHandle, offset2));
+        value -= mTransform.worldToIndex(readAttributeValue<ReadHandleType, ValueType>(mHandle, offset1));
+    }
+
+    size_t size() const { return mOffsetPairs->size(); }
+    openvdb::Index stride() const { return mStride; }
+
+private:
+    const ReadHandleType mHandle;
+    const GA_Attribute& mAttribute;
+    OffsetPairListPtr mOffsetPairs;
+    openvdb::Index mStride;
+    openvdb::math::Transform mTransform;
+}; // struct HoudiniOffsetAttribute
 
 
 ////////////////////////////////////////

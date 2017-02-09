@@ -83,7 +83,8 @@ template <typename PointDataTreeT>
 Index64 getPointOffsets(std::vector<Index64>& pointOffsets, const PointDataTreeT& tree,
                      const std::vector<Name>& includeGroups = std::vector<Name>(),
                      const std::vector<Name>& excludeGroups = std::vector<Name>(),
-                     const bool inCoreOnly = false);
+                     const bool inCoreOnly = false,
+                     const bool curves = true);
 
 
 /// @brief Total points in the group in the PointDataTree
@@ -260,7 +261,8 @@ Index64 inactiveGroupPointCount(const PointDataTreeT& tree, const Name& name, co
 template <typename PointDataTreeT>
 Index64 getPointOffsets(std::vector<Index64>& pointOffsets, const PointDataTreeT& tree,
                      const std::vector<Name>& includeGroups, const std::vector<Name>& excludeGroups,
-                     const bool inCoreOnly)
+                     const bool inCoreOnly,
+                     const bool curves)
 {
     using LeafNode = typename PointDataTreeT::LeafNodeType;
 
@@ -269,7 +271,19 @@ Index64 getPointOffsets(std::vector<Index64>& pointOffsets, const PointDataTreeT
     tree::LeafManager<const PointDataTreeT> leafManager(tree);
     const size_t leafCount = leafManager.leafCount();
 
+    if (leafCount == 0)     return Index64(0);
+
     pointOffsets.reserve(leafCount);
+
+    size_t segmentsIndex = AttributeSet::INVALID_POS;
+    const AttributeSet::Descriptor& descriptor = leafManager.leaf(0).attributeSet().descriptor();
+    const MetaMap& metadata = descriptor.getMetadata();
+    StringMetadata::ConstPtr segmentsMetadata =
+            metadata.getMetadata<StringMetadata>("nurbscurve");
+
+    if (segmentsMetadata) {
+        segmentsIndex = descriptor.find(segmentsMetadata->value());
+    }
 
     Index64 pointOffset = 0;
     for (size_t n = 0; n < leafCount; n++)
@@ -290,7 +304,11 @@ Index64 getPointOffsets(std::vector<Index64>& pointOffsets, const PointDataTreeT
             pointOffset += iterCount(filterIndexIter);
         }
         else {
-            pointOffset += leaf.onPointCount();
+            size_t stride = 1;
+            if (segmentsIndex != AttributeSet::INVALID_POS) {
+                stride += leaf.constAttributeArray(segmentsIndex).stride();
+            }
+            pointOffset += leaf.onPointCount() * stride;
         }
         pointOffsets.push_back(pointOffset);
     }

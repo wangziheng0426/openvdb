@@ -158,6 +158,7 @@ convertPointDataGridPosition(   PositionAttribute& positionAttribute,
                                 const Index64 startOffset,
                                 const std::vector<Name>& includeGroups = std::vector<Name>(),
                                 const std::vector<Name>& excludeGroups = std::vector<Name>(),
+                                const bool curves = true,
                                 const bool inCoreOnly = false);
 
 
@@ -579,6 +580,7 @@ struct ConvertPointDataGridPositionOp {
                                     const Index64 startOffset,
                                     const math::Transform& transform,
                                     const size_t index,
+                                    const size_t segmentsIndex,
                                     const std::vector<Name>& includeGroups = std::vector<Name>(),
                                     const std::vector<Name>& excludeGroups = std::vector<Name>(),
                                     const bool inCoreOnly = false)
@@ -587,6 +589,7 @@ struct ConvertPointDataGridPositionOp {
         , mStartOffset(startOffset)
         , mTransform(transform)
         , mIndex(index)
+        , mSegmentsIndex(segmentsIndex)
         , mIncludeGroups(includeGroups)
         , mExcludeGroups(excludeGroups)
         , mInCoreOnly(inCoreOnly)
@@ -615,6 +618,15 @@ struct ConvertPointDataGridPositionOp {
 
             auto handle = AttributeHandle<ValueType>::create(leaf->constAttributeArray(mIndex));
 
+            bool curves(mSegmentsIndex != AttributeSet::INVALID_POS);
+            AttributeHandle<Vec3f>::Ptr segmentsHandle;
+            int stride = 1;
+            if (curves) {
+                const AttributeArray& segmentsArray = leaf->constAttributeArray(mSegmentsIndex);
+                segmentsHandle = AttributeHandle<Vec3f>::create(segmentsArray);
+                stride = segmentsArray.stride();
+            }
+
             if (useGroups) {
                 auto iter = leaf->beginIndexOn(MultiGroupFilter(mIncludeGroups, mExcludeGroups));
 
@@ -633,6 +645,14 @@ struct ConvertPointDataGridPositionOp {
                     const Vec3d pos = handle->get(*iter);
                     pHandle.set(static_cast<Index>(offset++), /*stride=*/0,
                         mTransform.indexToWorld(pos + xyz));
+                    if (curves) {
+                        for (int i = 0; i < stride; i++) {
+                            Vec3d segmentPos = segmentsHandle->get(*iter, i);
+                            segmentPos += pos;
+                            pHandle.set(static_cast<Index>(offset++), /*stride=*/0,
+                                mTransform.indexToWorld(segmentPos + xyz));
+                        }
+                    }
                 }
             }
         }
@@ -645,6 +665,7 @@ struct ConvertPointDataGridPositionOp {
     const Index64                           mStartOffset;
     const math::Transform&                  mTransform;
     const size_t                            mIndex;
+    const size_t                            mSegmentsIndex;
     const std::vector<std::string>&         mIncludeGroups;
     const std::vector<std::string>&         mExcludeGroups;
     const bool                              mInCoreOnly;
@@ -1137,6 +1158,7 @@ convertPointDataGridPosition(   PositionAttribute& positionAttribute,
                                 const Index64 startOffset,
                                 const std::vector<Name>& includeGroups,
                                 const std::vector<Name>& excludeGroups,
+                                const bool curves,
                                 const bool inCoreOnly)
 {
     using TreeType      = typename PointDataGridT::TreeType;
@@ -1163,9 +1185,22 @@ convertPointDataGridPosition(   PositionAttribute& positionAttribute,
 
     const size_t positionIndex = iter->attributeSet().find("P");
 
+    size_t segmentsIndex = AttributeSet::INVALID_POS;
+
+    if (curves) {
+        const MetaMap& metadata = descriptor.getMetadata();
+        StringMetadata::ConstPtr segmentsMetadata =
+                metadata.getMetadata<StringMetadata>("nurbscurve");
+
+        if (segmentsMetadata) {
+            segmentsIndex = descriptor.find(segmentsMetadata->value());
+        }
+    }
+
     positionAttribute.expand();
     ConvertPointDataGridPositionOp<TreeType, PositionAttribute> convert(
-                    positionAttribute, pointOffsets, startOffset, grid.transform(), positionIndex,
+                    positionAttribute, pointOffsets, startOffset,
+                    grid.transform(), positionIndex, segmentsIndex,
                     newIncludeGroups, newExcludeGroups, inCoreOnly);
     tbb::parallel_for(leafManager.leafRange(), convert);
     positionAttribute.compact();
